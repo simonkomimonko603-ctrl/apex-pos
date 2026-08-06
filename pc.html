@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APEX POS - Kancelária (Manažment)</title>
+    <!-- Tailwind CSS pre moderný vzhľad -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK (Modular v9) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+        import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+
+        // Tvoja reálna Firebase konfigurácia
+        const firebaseConfig = {
+            apiKey: "AIzaSyCdSyqbAIIKW-q_pDMwFvLKVlmKYmANA7U",
+            authDomain: "apexpos-ef6a0.firebaseapp.com",
+            databaseURL: "https://apexpos-ef6a0-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "apexpos-ef6a0",
+            storageBucket: "apexpos-ef6a0.firebasestorage.app",
+            messagingSenderId: "123316014625",
+            appId: "1:123316014625:web:edd04e73ba2d1d524f5d60",
+            measurementId: "G-YZTTVLVPTT"
+        };
+
+        // Inicializácia Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Globálne premenné dostupné pre okno
+        window.db = db;
+        window.ref = ref;
+        window.onValue = onValue;
+        window.update = update;
+
+        // Spustenie počúvania zmien po načítaní stránky
+        document.addEventListener("DOMContentLoaded", () => {
+            initLiveSync();
+        });
+    </script>
+</head>
+<body class="bg-gray-900 text-white font-sans min-h-screen flex flex-col">
+
+    <!-- Horná lišta -->
+    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex justify-between items-center shadow-md">
+        <div class="flex items-center space-x-3">
+            <span class="text-2xl font-black text-amber-500 tracking-wider">APEX POS</span>
+            <span class="bg-amber-500/10 text-amber-400 text-xs px-2.5 py-1 rounded-full font-semibold border border-amber-500/20">Kancelária / Manažment (Online)</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <span id="connection-status" class="inline-block w-3 h-3 rounded-full bg-red-500 animate-pulse"></span>
+            <span id="status-text" class="text-sm text-gray-400 font-medium">Pripájam sa...</span>
+        </div>
+    </header>
+
+    <!-- Hlavný obsah -->
+    <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Sekcia: Stoly v prevádzke -->
+        <section class="bg-gray-800 rounded-xl p-5 border border-gray-700 flex flex-col shadow-lg">
+            <h2 class="text-lg font-bold mb-4 text-gray-200 flex items-center justify-between">
+                <span>Stoly a Účty</span>
+                <span id="active-tables-count" class="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">0 aktívnych</span>
+            </h2>
+            <div id="tables-container" class="space-y-3 overflow-y-auto flex-1 max-h-[600px] pr-1">
+                <!-- Dynamicky načítané stoly -->
+                <div class="text-gray-500 text-center py-8">Načítavam stoly z Firebase...</div>
+            </div>
+        </section>
+
+        <!-- Sekcia: Sklad a produkty (Správa) -->
+        <section class="lg:col-span-2 bg-gray-800 rounded-xl p-5 border border-gray-700 flex flex-col shadow-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-gray-200">Správa Skladu a Položiek</h2>
+                <button onclick="addNewProductPrompt()" class="bg-amber-500 hover:bg-amber-600 text-gray-950 font-bold px-4 py-2 rounded-lg text-sm transition duration-200 shadow-md">
+                    + Pridať produkt
+                </button>
+            </div>
+            <div class="overflow-x-auto flex-1 max-h-[600px]">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wider">
+                            <th class="py-3 px-4">Názov produktu</th>
+                            <th class="py-3 px-4">Cena</th>
+                            <th class="py-3 px-4">Sklad / Dostupné</th>
+                            <th class="py-3 px-4 text-right">Akcie</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-table-body" class="divide-y divide-gray-700 text-sm">
+                        <tr>
+                            <td colspan="4" class="text-gray-500 text-center py-8">Načítavam produktové portfolio...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Skript pre real-time komunikáciu s Firebase -->
+    <script>
+        function initLiveSync() {
+            const checkFirebaseInterval = setInterval(() => {
+                if (window.db && window.ref && window.onValue) {
+                    clearInterval(checkFirebaseInterval);
+                    setupListeners();
+                }
+            }, 100);
+        }
+
+        function setupListeners() {
+            const db = window.db;
+            const ref = window.ref;
+            const onValue = window.onValue;
+
+            // Indikátor pripojenia (Firebase connection state)
+            const connectedRef = ref(db, ".info/connected");
+            onValue(connectedRef, (snap) => {
+                const statusDot = document.getElementById("connection-status");
+                const statusText = document.getElementById("status-text");
+                if (snap.val() === true) {
+                    statusDot.className = "inline-block w-3 h-3 rounded-full bg-emerald-500";
+                    statusText.innerText = "Online (Synchronizované)";
+                } else {
+                    statusDot.className = "inline-block w-3 h-3 rounded-full bg-red-500 animate-pulse";
+                    statusText.innerText = "Offline / Prepája sa...";
+                }
+            });
+
+            // 1. Počúvanie zmien na stoloch (stoly v reálnom čase z tabletu)
+            const tablesRef = ref(db, "stoly");
+            onValue(tablesRef, (snapshot) => {
+                const data = snapshot.val();
+                const container = document.getElementById("tables-container");
+                const countBadge = document.getElementById("active-tables-count");
+                
+                container.innerHTML = "";
+                if (!data) {
+                    container.innerHTML = `<div class="text-gray-500 text-center py-8">Žiadne aktívne stoly</div>`;
+                    countBadge.innerText = "0 aktívnych";
+                    return;
+                }
+
+                let activeCount = 0;
+                Object.keys(data).forEach(tableId => {
+                    const table = data[tableId];
+                    if (table.items && table.items.length > 0) {
+                        activeCount++;
+                        let total = table.items.reduce((sum, item) => sum + (item.price * (item.qty || 1)), 0);
+
+                        let itemsHtml = table.items.map(i => `<li class="text-xs text-gray-400 flex justify-between"><span>${i.name} (x${i.qty || 1})</span><span>${(i.price * (i.qty || 1)).toFixed(2)} €</span></li>`).join('');
+
+                        container.innerHTML += `
+                            <div class="bg-gray-700/50 border border-gray-700 p-4 rounded-xl shadow-sm">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="font-bold text-amber-400">${tableId.toUpperCase()}</span>
+                                    <span class="text-xs font-bold text-emerald-400">${total.toFixed(2)} €</span>
+                                </div>
+                                <ul class="space-y-1 border-t border-gray-600/50 pt-2 mb-2">
+                                    ${itemsHtml}
+                                </ul>
+                            </div>
+                        `;
+                    }
+                });
+
+                countBadge.innerText = `${activeCount} aktívnych`;
+                if (activeCount === 0) {
+                    container.innerHTML = `<div class="text-gray-500 text-center py-8">Všetky stoly sú prázdne</div>`;
+                }
+            });
+
+            // 2. Počúvanie zmien na produktoch / sklade
+            const productsRef = ref(db, "produkty");
+            onValue(productsRef, (snapshot) => {
+                const data = snapshot.val();
+                const tbody = document.getElementById("products-table-body");
+                
+                tbody.innerHTML = "";
+                if (!data) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="text-gray-500 text-center py-8">Žiadne produkty v databáze</td></tr>`;
+                    return;
+                }
+
+                Object.keys(data).forEach(prodKey => {
+                    const prod = data[prodKey];
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-gray-700/30 transition">
+                            <td class="py-3 px-4 font-medium text-gray-100">${prod.name}</td>
+                            <td class="py-3 px-4 text-amber-400 font-semibold">${Number(prod.price).toFixed(2)} €</td>
+                            <td class="py-3 px-4 text-gray-300">${prod.stock ?? 'N/A'} ks</td>
+                            <td class="py-3 px-4 text-right">
+                                <button onclick="editProduct('${prodKey}', '${prod.name}', ${prod.price})" class="text-gray-400 hover:text-amber-400 text-xs bg-gray-700 px-2.5 py-1 rounded transition">Upraviť</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            });
+        }
+
+        // Funkcia na pridanie nového produktu priamo do Firebase z PC
+        function addNewProductPrompt() {
+            const name = prompt("Zadaj názov produktu:");
+            if (!name) return;
+            const price = parseFloat(prompt("Zadaj cenu v €:", "2.50"));
+            if (isNaN(price)) return;
+            const stock = parseInt(prompt("Zadaj počiatočný stav skladu (ks):", "100"));
+
+            const newProdKey = 'prod_' + Date.now();
+            window.update(window.ref(window.db, 'produkty/' + newProdKey), {
+                name: name,
+                price: price,
+                stock: isNaN(stock) ? 0 : stock
+            }).then(() => {
+                alert("Produkt úspešne pridaný! Hneď sa objaví aj na tablete.");
+            }).catch(err => {
+                alert("Chyba pri ukladaní: " + err.message);
+            });
+        }
+
+        // Funkcia na úpravu ceny/produktu
+        function editProduct(key, currentName, currentPrice) {
+            const newName = prompt("Uprav názov produktu:", currentName);
+            if (!newName) return;
+            const newPrice = parseFloat(prompt("Uprav cenu v €:", currentPrice));
+            if (isNaN(newPrice)) return;
+
+            window.update(window.ref(window.db, 'produkty/' + key), {
+                name: newName,
+                price: newPrice
+            });
+        }
+    </script>
+</body>
+</html>

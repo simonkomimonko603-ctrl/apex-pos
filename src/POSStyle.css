@@ -1,0 +1,98 @@
+body {
+  margin: 0;
+  background-color: #121212;
+  color: #e0e0e0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.pos-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.pos-header {
+  background-color: #1e1e1e;
+  border-bottom: 2px solid #c5a059; /* Luxusná zlatá línia */
+  padding: 15px 25px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pos-header h1 {
+  color: #c5a059;
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: 1px;
+}
+
+.badge {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+.badge.online { background-color: #1b5e20; color: #a5d6a7; }
+.badge.offline { background-color: #e65100; color: #ffe0b2; }
+
+.tables-grid {
+  padding: 30px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px;
+}
+
+.table-btn {
+  background: linear-gradient(145deg, #252525, #1a1a1a);
+  border: 1px solid #c5a059;
+  color: #c5a059;
+  padding: 30px;
+  font-size: 1.2rem;
+  font-weight: bold;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.table-btn:active {
+  transform: scale(0.96);
+  background: #c5a059;
+  color: #121212;
+}
+
+.order-screen {
+  padding: 25px;
+}
+
+.products-panel button, .cart-item button, .pay-btn, .back-btn {
+  background-color: #2b2b2b;
+  border: 1px solid #444;
+  color: #fff;
+  padding: 12px 18px;
+  margin: 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.pay-btn {
+  background: linear-gradient(135deg, #c5a059, #9c7c3d);
+  color: #121212;
+  font-size: 1.1rem;
+  border: none;
+  width: 100%;
+  margin-top: 15px;
+}
+
+.cart-item {
+  background: #1a1a1a;
+  padding: 10px 15px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-left: 4px solid #c5a059;
+}
