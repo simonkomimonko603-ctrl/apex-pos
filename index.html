@@ -2,17 +2,15 @@
 <html lang="sk">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>APEX POS</title>
   </head>
   <body>
     <div id="root"></div>
     <script type="module">
-      // Ak URL obsahuje /scan, načíta zákaznícky režim
+      // Ak URL obsahuje /scan, načíta scan.jsx, inak hlavný main.jsx
       if (window.location.pathname.includes('/scan')) {
-        import('/src/CustomerScanView.jsx'); 
+        import('/src/scan.jsx');
       } else {
-        // Inak načíta klasickú pokladňu
         import('/src/main.jsx');
       }
     </script>
