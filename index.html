@@ -2,12 +2,19 @@
 <html lang="sk">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Luxusný Bar POS</title>
+    <title>APEX POS</title>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module">
+      // Ak URL obsahuje /scan, načíta zákaznícky režim
+      if (window.location.pathname.includes('/scan')) {
+        import('/src/CustomerScanView.jsx'); 
+      } else {
+        // Inak načíta klasickú pokladňu
+        import('/src/main.jsx');
+      }
+    </script>
   </body>
 </html>

@@ -3,7 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement } from 'chart.js';
-import { Pie, Bar } from 'react-chartjs-2';
+import { Pie, Bar, Line } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement);
 
@@ -51,6 +51,39 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Otázka 10: Aktuálny čas v hornej lište
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+
+  // Otázka 7: Rýchle vyhľadávanie produktov podľa názvu/kódu
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Otázka 13: Vlastná položka s vlastnou cenou priamo pri pokladni
+  const [showCustomItemModal, setShowCustomItemModal] = useState(false);
+  const [customItemName, setCustomItemName] = useState('');
+  const [customItemPrice, setCustomItemPrice] = useState('');
+
+  // Otázka 8: Zľavy na položku alebo celkový účet
+  const [itemDiscountModal, setItemDiscountModal] = useState(null); // { cartId, name, price }
+  const [itemDiscountPercent, setItemDiscountPercent] = useState('');
+  const [globalDiscountPercent, setGlobalDiscountPercent] = useState(0);
+
+  // Otázka 12: Presun a zlučovanie stolov
+  const [showMoveTableModal, setShowMoveTableModal] = useState(false);
+  const [targetMoveTable, setTargetMoveTable] = useState('Stôl 1');
+
+  // Otázka 18: Zadanie počtu osôb pri otvorení stola
+  const [tablePaxData, setTablePaxData] = useState({}); // { 'Bar 1': 3, ... }
+  const [showPaxModal, setShowPaxModal] = useState(false);
+  const [tempPaxInput, setTempPaxInput] = useState('2');
+  const [tableToConfigPax, setTableToConfigPax] = useState('');
+
+  // Otázka 9: História uzavretých účtov a storno účtu
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyDetailModal, setHistoryDetailModal] = useState(null);
+
+  // Otázka 6: Tlač predbežného účtu
+  const [previewBillModal, setPreviewBillModal] = useState(null);
+
   const [inAppNotification, setInAppNotification] = useState(null);
 
   const [kdsOrders, setKdsOrders] = useState([]);
@@ -64,13 +97,11 @@ export default function App() {
   const [newProdStock, setNewProdStock] = useState('');
   const [newProdBarcode, setNewProdBarcode] = useState('');
 
-  // Reálny blok / účet pri platení
   const [activeReceipt, setActiveReceipt] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('Hotovosť');
+  const [paymentMethod, setPaymentMethod] = useState('Hotovosť'); // Otázka 11: Hotovosť, Karta, Gastro lístky, Faktúra
   const [appliedVoucher, setAppliedVoucher] = useState('');
   const [voucherDiscount, setVoucherDiscount] = useState(0);
 
-  // Vernostné karty a vouchery databáza/stav
   const [loyaltyCards, setLoyaltyCards] = useState([
     { id: 1, cardNumber: 'CARD-88421', owner: 'Jozef Mrkva', discountPercent: 10, points: 340 },
     { id: 2, cardNumber: 'CARD-55129', owner: 'Anna Krátka', discountPercent: 15, points: 510 }
@@ -86,16 +117,13 @@ export default function App() {
   const [newVoucherCode, setNewVoucherCode] = useState('');
   const [newVoucherValue, setNewVoucherValue] = useState('');
 
-  // Modál na pridanie poznámky k položke v košíku
   const [noteModalItem, setNoteModalItem] = useState(null);
   const [itemNoteInput, setItemNoteInput] = useState('');
 
-  // Modál na schválenie storna manažérom
   const [pendingCancelItem, setPendingCancelItem] = useState(null);
   const [managerPinModal, setManagerPinModal] = useState(false);
   const [managerPinInput, setManagerPinInput] = useState('');
 
-  // Rezervácie stôl
   const [reservations, setReservations] = useState([
     { id: 1, table: 'VIP Box', time: '19:00', name: 'Pán Novák', pax: 4 }
   ]);
@@ -104,23 +132,26 @@ export default function App() {
   const [newResName, setNewResName] = useState('');
   const [newResPax, setNewResPax] = useState('2');
 
-  // Denná / mesačná uzávierka a Automatické Z-uzávierky
   const [paidReceiptsHistory, setPaidReceiptsHistory] = useState([]);
   const [automaticClosures, setAutomaticClosures] = useState([]);
   const [showClosureModal, setShowClosureModal] = useState(false);
 
-  // Inventúra so skenerom
   const [inventoryWizardState, setInventoryWizardState] = useState('select');
   const [inventoryTargetProduct, setInventoryTargetProduct] = useState(null);
   const [inventoryScannedCount, setInventoryScannedCount] = useState(0);
 
+  // Otázka 17: Pokročilý výber kategórií produktov (rozšírené kategórie)
   const categoryConfig = {
     'Všetko': { bg: 'rgba(245, 158, 11, 0.12)', border: '#f59e0b', text: '#f59e0b', dot: '#f59e0b' },
     'Káva': { bg: 'rgba(180, 130, 90, 0.15)', border: '#b4825a', text: '#d4a373', dot: '#d4a373' },
     'Alkohol': { bg: 'rgba(239, 68, 68, 0.12)', border: '#ef4444', text: '#f87171', dot: '#ef4444' },
     'Cocktaily': { bg: 'rgba(236, 72, 153, 0.12)', border: '#ec4899', text: '#f472b6', dot: '#ec4899' },
     'Nealko napoje': { bg: 'rgba(59, 130, 246, 0.12)', border: '#3b82f6', text: '#60a5fa', dot: '#3b82f6' },
-    'Voda': { bg: 'rgba(20, 184, 166, 0.12)', border: '#14b8a6', text: '#2dd4bf', dot: '#14b8a6' }
+    'Voda': { bg: 'rgba(20, 184, 166, 0.12)', border: '#14b8a6', text: '#2dd4bf', dot: '#14b8a6' },
+    'Jedlá': { bg: 'rgba(234, 179, 8, 0.12)', border: '#eab308', text: '#facc15', dot: '#eab308' },
+    'Pivo': { bg: 'rgba(249, 115, 22, 0.12)', border: '#f97316', text: '#fb923c', dot: '#f97316' },
+    'Víno': { bg: 'rgba(168, 85, 247, 0.12)', border: '#a855f7', text: '#c084fc', dot: '#a855f7' },
+    'Dezerty': { bg: 'rgba(236, 72, 153, 0.15)', border: '#db2777', text: '#f472b6', dot: '#db2777' }
   };
 
   const categories = Object.keys(categoryConfig);
@@ -128,6 +159,17 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 3000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Otázka 10: Aktuálny čas v hornej lište
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      setCurrentTimeStr(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    };
+    updateClock();
+    const clockInterval = setInterval(updateClock, 1000);
+    return () => clearInterval(clockInterval);
   }, []);
 
   useEffect(() => {
@@ -171,7 +213,6 @@ export default function App() {
     }, 4000);
   };
 
-  // FUNKCIA NA REÁLNE ODOSLANIE REPORTU NA TELEGRAM
   const sendReportToTelegram = async (reportData) => {
     const token = "8758769903:AAFsnzKXh_3QnLKJNN6IpLVpf4fXjwL7lIg";
     const chatId = "8876034280";
@@ -197,7 +238,6 @@ export default function App() {
     }
   };
 
-  // AUTOMATICKÁ POLNOČNÁ Z-UZÁVIERKA & RANNÉ ODOSLANIE NA TELEGRAM OKOLO 8:00
   useEffect(() => {
     const checkMidnightAndMorning = () => {
       const now = new Date();
@@ -205,7 +245,6 @@ export default function App() {
       const minutes = now.getMinutes();
       const todayStr = now.toDateString();
 
-      // Polnočná uzávierka (spustí sa o 00:00)[cite: 2, 3]
       if (hours === 0 && minutes === 0) {
         const lastAutoDate = localStorage.getItem('last_auto_closure_date');
         if (lastAutoDate !== todayStr) {
@@ -244,7 +283,6 @@ export default function App() {
         }
       }
 
-      // Ranné odoslanie na Telegram okolo 8:00 (spustí sa medzi 8:00 a 8:01)[cite: 2, 3]
       if (hours === 8 && minutes === 0) {
         const lastTelegramDate = localStorage.getItem('last_telegram_sent_date');
         if (lastTelegramDate !== todayStr) {
@@ -368,11 +406,34 @@ export default function App() {
       cartId: Date.now() + Math.random(), 
       sentToBar: false, 
       note: '',
+      discountPercent: 0,
       vat: product.vat || 20 
     }];
     
     setTableCarts({ ...tableCarts, [selectedTable]: updatedCart });
     await saveTableCartToFirebase(updatedCart);
+  };
+
+  // Otázka 13: Vlastná položka s vlastnou cenou priamo pri pokladni
+  const addCustomItemToCart = async () => {
+    if (!customItemName || !customItemPrice) {
+      triggerInAppAlert("Zadajte názov aj cenu vlastnej položky!");
+      return;
+    }
+    const priceVal = parseFloat(customItemPrice.toString().replace(',', '.')) || 0;
+    const customProduct = {
+      id: 'custom_' + Date.now(),
+      name: customItemName,
+      category: 'Ostatné',
+      price: priceVal,
+      stock: 99,
+      vat: 20
+    };
+    await addToCart(customProduct);
+    setCustomItemName('');
+    setCustomItemPrice('');
+    setShowCustomItemModal(false);
+    triggerInAppAlert("Vlastná položka pridaná do účtu.");
   };
 
   const requestRemoveFromCart = (cartId) => {
@@ -424,6 +485,26 @@ export default function App() {
     triggerInAppAlert("Poznámka uložená k položke.");
   };
 
+  // Otázka 8: Aplikovanie zľavy na konkrétnu položku
+  const applyItemDiscount = async () => {
+    if (!itemDiscountModal) return;
+    const p = parseFloat(itemDiscountPercent) || 0;
+    const currentTableCart = tableCarts[selectedTable] || [];
+    const updatedCart = currentTableCart.map(item => {
+      if (item.cartId === itemDiscountModal.cartId) {
+        const basePrice = item.originalPrice || item.price;
+        const discounted = basePrice * (1 - p / 100);
+        return { ...item, originalPrice: basePrice, price: discounted, discountPercent: p };
+      }
+      return item;
+    });
+    setTableCarts({ ...tableCarts, [selectedTable]: updatedCart });
+    await saveTableCartToFirebase(updatedCart);
+    setItemDiscountModal(null);
+    setItemDiscountPercent('');
+    triggerInAppAlert(`Zľava ${p}% aplikovaná na položku.`);
+  };
+
   const payForTable = async (tableName = selectedTable) => {
     const targetCart = tableCarts[tableName] || [];
     if (targetCart.length === 0) {
@@ -431,7 +512,10 @@ export default function App() {
       return;
     }
 
-    const currentTotal = targetCart.reduce((sum, i) => sum + i.price, 0);
+    let currentTotal = targetCart.reduce((sum, i) => sum + i.price, 0);
+    if (globalDiscountPercent > 0) {
+      currentTotal = currentTotal * (1 - globalDiscountPercent / 100);
+    }
     
     setActiveReceipt({
       tableName,
@@ -466,11 +550,12 @@ export default function App() {
         items: activeReceipt.items,
         total: finalTotalToPay,
         originalTotal: activeReceipt.total,
-        paymentMethod,
+        paymentMethod, // Otázka 11: ukladá vybraný spôsob platby
         voucherDiscount,
         timestamp: activeReceipt.timestamp,
         createdAt: Date.now(),
-        cashier: currentUser?.name || 'Neznámy'
+        cashier: currentUser?.name || 'Neznámy',
+        status: 'Zaplatene' // Otázka 9: Stav účtu
       });
     } catch (e) {
       console.log("Error saving receipt history");
@@ -498,8 +583,8 @@ export default function App() {
         }
       }
 
-      const barItems = unsentCart.filter(i => ['Káva', 'Alkohol', 'Cocktaily', 'Nealko napoje', 'Voda'].includes(i.category));
-      const kitchenItems = unsentCart.filter(i => !['Káva', 'Alkohol', 'Cocktaily', 'Nealko napoje', 'Voda'].includes(i.category));
+      const barItems = unsentCart.filter(i => ['Káva', 'Alkohol', 'Cocktaily', 'Nealko napoje', 'Voda', 'Pivo', 'Víno'].includes(i.category));
+      const kitchenItems = unsentCart.filter(i => !['Káva', 'Alkohol', 'Cocktaily', 'Nealko napoje', 'Voda', 'Pivo', 'Víno'].includes(i.category));
 
       if (barItems.length > 0) {
         await addDoc(collection(db, 'kdsOrders'), {
@@ -538,7 +623,10 @@ export default function App() {
     }
   };
 
-  const totalAmount = cart.reduce((sum, i) => sum + i.price, 0).toFixed(2);
+  // Vypočet celkovej sumy s ohľadom na globálnu zľavu
+  let subtotalAmount = cart.reduce((sum, i) => sum + i.price, 0);
+  let finalCartTotal = subtotalAmount * (1 - globalDiscountPercent / 100);
+  const totalAmount = finalCartTotal.toFixed(2);
 
   const todayReceipts = paidReceiptsHistory.filter(() => true);
   const totalRevenueToday = todayReceipts.reduce((sum, r) => sum + (r.total || 0), 0);
@@ -552,6 +640,38 @@ export default function App() {
     unresolvedItemsCount += tItems.length;
   });
 
+  // Otázka 4: Štatistiky najpredávanejších produktov (z histórie blokov)
+  const getTopSellingProducts = () => {
+    const counts = {};
+    paidReceiptsHistory.forEach(rec => {
+      if (rec.items) {
+        rec.items.forEach(it => {
+          counts[it.name] = (counts[it.name] || 0) + 1;
+        });
+      }
+    });
+    const sorted = Object.keys(counts).map(name => ({ name, count: counts[name] })).sort((a, b) => b.count - a.count);
+    return sorted.slice(0, 5);
+  };
+
+  const topProducts = getTopSellingProducts();
+
+  // Otázka 15: Grafický prehľad denných tržieb v uzávierke (posledných 7 záznamov / dní)
+  const dailyRevenueChartData = {
+    labels: paidReceiptsHistory.slice(-7).map((r, idx) => `Blok #${idx + 1}`),
+    datasets: [
+      {
+        label: 'Tržba v €',
+        data: paidReceiptsHistory.slice(-7).map(r => r.total || 0),
+        backgroundColor: 'rgba(245, 158, 11, 0.2)',
+        borderColor: '#f59e0b',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: true
+      }
+    ]
+  };
+
   const categoryStockData = {
     labels: categories.filter(c => c !== 'Všetko'),
     datasets: [
@@ -562,7 +682,7 @@ export default function App() {
             .filter(p => p.category === cat && p.stock !== 99)
             .reduce((acc, p) => acc + (p.stock || 0), 0)
         ),
-        backgroundColor: ['#d4a373', '#ef4444', '#ec4899', '#3b82f6', '#14b8a6'],
+        backgroundColor: ['#d4a373', '#ef4444', '#ec4899', '#3b82f6', '#14b8a6', '#eab308', '#f97316', '#a855f7', '#db2777'],
         borderWidth: 0,
       },
     ],
@@ -675,6 +795,210 @@ export default function App() {
         </div>
       )}
 
+      {/* Otázka 13: Modál pre pridanie vlastnej položky */}
+      {showCustomItemModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '360px', padding: '24px', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#f59e0b', fontSize: '16px' }}>Vlastná položka (Voľná cena)</h3>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 15px 0' }}>Zadajte názov a vlastnú cenu pre položku pri pokladni:</p>
+            <input 
+              type="text" 
+              autoFocus
+              value={customItemName} 
+              onChange={e => setCustomItemName(e.target.value)} 
+              placeholder="Názov položky (napr. Dopsat jedlo)" 
+              style={{ padding: '10px', width: '100%', background: '#030303', color: '#fff', border: '1px solid #374151', borderRadius: '8px', fontSize: '14px', marginBottom: '10px', boxSizing: 'border-box' }} 
+            />
+            <input 
+              type="number" 
+              value={customItemPrice} 
+              onChange={e => setCustomItemPrice(e.target.value)} 
+              placeholder="Cena (€)" 
+              style={{ padding: '10px', width: '100%', background: '#030303', color: '#fff', border: '1px solid #374151', borderRadius: '8px', fontSize: '14px', marginBottom: '15px', boxSizing: 'border-box' }} 
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={addCustomItemToCart} style={{ flex: 1, background: '#f59e0b', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Pridať do účtu</button>
+              <button onClick={() => setShowCustomItemModal(false)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer' }}>Zrušiť</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Otázka 8: Modál pre zľavu na položku */}
+      {itemDiscountModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #38bdf8', borderRadius: '20px', width: '340px', padding: '24px', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#38bdf8', fontSize: '16px' }}>Zľava na položku</h3>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 15px 0' }}>{itemDiscountModal.name}</p>
+            <input 
+              type="number" 
+              autoFocus
+              value={itemDiscountPercent} 
+              onChange={e => setItemDiscountPercent(e.target.value)} 
+              placeholder="Zľava v % (npr. 10)" 
+              style={{ padding: '10px', width: '100%', background: '#030303', color: '#fff', border: '1px solid #374151', borderRadius: '8px', fontSize: '16px', marginBottom: '15px', boxSizing: 'border-box' }} 
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={applyItemDiscount} style={{ flex: 1, background: '#38bdf8', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Aplikovať zľavu</button>
+              <button onClick={() => setItemDiscountModal(null)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer' }}>Zrušiť</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Otázka 12: Modál pre presun stola */}
+      {showMoveTableModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '360px', padding: '24px', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#f59e0b', fontSize: '16px' }}>Presun / Zlúčenie stola</h3>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 15px 0' }}>Presunúť obsah stola <strong>{selectedTable}</strong> na cieľový stôl:</p>
+            <select 
+              value={targetMoveTable} 
+              onChange={e => setTargetMoveTable(e.target.value)} 
+              style={{ padding: '10px', width: '100%', background: '#030303', color: '#fff', border: '1px solid #374151', borderRadius: '8px', fontSize: '14px', marginBottom: '15px', cursor: 'pointer' }}
+            >
+              {tables.filter(t => t !== selectedTable).map(t => (
+                <option key={t} value={t}>{t} {(tableCarts[t] || []).length > 0 ? '(obsadený - zlúči sa)' : '(voľný)'}</option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={async () => {
+                const sourceCart = tableCarts[selectedTable] || [];
+                const destCart = tableCarts[targetMoveTable] || [];
+                const merged = [...destCart, ...sourceCart];
+                
+                const newCarts = { ...tableCarts, [targetMoveTable]: merged, [selectedTable]: [] };
+                setTableCarts(newCarts);
+                await saveTableCartToFirebase(merged, targetMoveTable);
+                await saveTableCartToFirebase([], selectedTable);
+
+                setSelectedTable(targetMoveTable);
+                setShowMoveTableModal(false);
+                triggerInAppAlert(`Stôl úspešne presunutý/zlúčený na ${targetMoveTable}.`);
+              }} style={{ flex: 1, background: '#f59e0b', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Potvrdiť presun</button>
+              <button onClick={() => setShowMoveTableModal(false)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer' }}>Zrušiť</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Otázka 18: Modál pre zadanie počtu osôb pri stole */}
+      {showPaxModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #38bdf8', borderRadius: '20px', width: '340px', padding: '24px', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#38bdf8', fontSize: '16px' }}>Počet osôb pri stole</h3>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 15px 0' }}>Zadajte počet hostí pre {tableToConfigPax}:</p>
+            <input 
+              type="number" 
+              autoFocus
+              value={tempPaxInput} 
+              onChange={e => setTempPaxInput(e.target.value)} 
+              style={{ padding: '10px', width: '100%', background: '#030303', color: '#fff', border: '1px solid #374151', borderRadius: '8px', fontSize: '18px', textAlign: 'center', marginBottom: '15px', boxSizing: 'border-box' }} 
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => {
+                const paxNum = parseInt(tempPaxInput) || 1;
+                setTablePaxData({ ...tablePaxData, [tableToConfigPax]: paxNum });
+                setShowPaxModal(false);
+                setSelectedTable(tableToConfigPax);
+                setCurrentTab('pos');
+                triggerInAppAlert(`Stôl ${tableToConfigPax} otvorený pre ${paxNum} osôb.`);
+              }} style={{ flex: 1, background: '#38bdf8', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Uložiť a otvoriť</button>
+              <button onClick={() => setShowPaxModal(false)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer' }}>Zrušiť</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Otázka 6: Tlač predbežného účtu (Náhľad / Tlač) */}
+      {previewBillModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '380px', padding: '24px', color: '#fff', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ textAlign: 'center', borderBottom: '1px dashed #374151', paddingBottom: '12px', marginBottom: '15px' }}>
+              <h3 style={{ margin: 0, color: '#f59e0b', fontSize: '16px' }}>PREDBEŽNÝ ÚČET (NEFIŠKÁLNY)</h3>
+              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 0 0 0' }}>Stôl: {previewBillModal.tableName} | {new Date().toLocaleTimeString()}</p>
+            </div>
+            <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '15px' }}>
+              {previewBillModal.items.map((it, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>{it.name}</span>
+                  <span style={{ fontWeight: 'bold', color: '#f59e0b' }}>{it.price.toFixed(2)} €</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ borderTop: '1px solid #374151', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', marginBottom: '20px' }}>
+              <span>Spolu k úhrade:</span>
+              <span style={{ color: '#34d399' }}>{previewBillModal.items.reduce((s, i) => s + i.price, 0).toFixed(2)} €</span>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => {
+                triggerInAppAlert("Predbežný účet bol vytlačený na účtenkovej tlačiarni.");
+                setPreviewBillModal(null);
+              }} style={{ flex: 1, background: '#f59e0b', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Vytlačiť predbežný účet</button>
+              <button onClick={() => setPreviewBillModal(null)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer' }}>Zavrieť</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Otázka 9: História uzavretých účtov a detail / storno účtu */}
+      {showHistoryModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 11000 }}>
+          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '500px', padding: '24px', display: 'flex', flexDirection: 'column', color: '#fff', maxHeight: '90vh' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#f59e0b', fontSize: '18px' }}>História uzavretých účtov</h3>
+            <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+              {paidReceiptsHistory.length === 0 ? (
+                <p style={{ color: '#9ca3af', textAlign: 'center' }}>Žiadne uzavreté účty</p>
+              ) : (
+                paidReceiptsHistory.map(rec => (
+                  <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#030303', padding: '10px 14px', borderRadius: '10px', border: '1px solid #1f2937' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px' }}>Stôl: {rec.tableName} | <span style={{ color: '#34d399' }}>{rec.total?.toFixed(2)} €</span></div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>Platba: {rec.paymentMethod} | Čas: {rec.timestamp} | Kasír: {rec.cashier}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={() => setHistoryDetailModal(rec)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>Detail</button>
+                      {currentUser.isAdmin && (
+                        <button onClick={async () => {
+                          if (window.confirm("Naozaj stornovať tento uzavretý účet?")) {
+                            await deleteDoc(doc(db, 'paidReceipts', rec.id));
+                            triggerInAppAlert("Účet bol úspešne stornovaný z histórie.");
+                          }
+                        }} style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}>Storno</button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <button onClick={() => setShowHistoryModal(false)} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>Zavrieť</button>
+          </div>
+        </div>
+      )}
+
+      {/* Detail vybraného uzavretého účtu */}
+      {historyDetailModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
+          <div style={{ background: '#111827', border: '1px solid #38bdf8', borderRadius: '20px', width: '380px', padding: '24px', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#38bdf8', fontSize: '16px' }}>Detail bloku: {historyDetailModal.tableName}</h3>
+            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 15px 0' }}>Zaplatené: {historyDetailModal.timestamp} | Spôsob: {historyDetailModal.paymentMethod}</p>
+            <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '15px' }}>
+              {historyDetailModal.items && historyDetailModal.items.map((it, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span>{it.name}</span>
+                  <span style={{ fontWeight: 'bold', color: '#f59e0b' }}>{it.price.toFixed(2)} €</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ borderTop: '1px solid #374151', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold', marginBottom: '20px' }}>
+              <span>Celkom zaplatené:</span>
+              <span style={{ color: '#34d399' }}>{historyDetailModal.total?.toFixed(2)} €</span>
+            </div>
+            <button onClick={() => setHistoryDetailModal(null)} style={{ width: '100%', background: '#374151', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>Zavrieť detail</button>
+          </div>
+        </div>
+      )}
+
       {managerPinModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
           <div style={{ background: '#111827', border: '1px solid #ef4444', borderRadius: '20px', width: '340px', padding: '24px', textAlign: 'center', color: '#fff' }}>
@@ -740,8 +1064,9 @@ export default function App() {
             </div>
 
             <label style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '5px' }}>Spôsob platby:</label>
+            {/* Otázka 11: Evidencia rôznych spôsobov platby (Hotovosť, Karta, Gastro lístky, Faktúra) */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', marginBottom: '12px' }}>
-              {['Hotovosť', 'Karta', 'Stravné lístky', 'QR platba'].map(m => (
+              {['Hotovosť', 'Karta', 'Gastro lístky', 'Faktúra'].map(m => (
                 <button key={m} onClick={() => setPaymentMethod(m)} style={{ padding: '8px', background: paymentMethod === m ? '#f59e0b' : '#030303', color: paymentMethod === m ? '#030303' : '#fff', border: '1px solid #374151', borderRadius: '8px', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer' }}>
                   {m}
                 </button>
@@ -812,9 +1137,9 @@ export default function App() {
 
       {showClosureModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 11000 }}>
-          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '450px', padding: '24px', display: 'flex', flexDirection: 'column', color: '#fff', boxShadow: '0 20px 40px rgba(0,0,0,0.8)', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ background: '#111827', border: '1px solid #f59e0b', borderRadius: '20px', width: '480px', padding: '24px', display: 'flex', flexDirection: 'column', color: '#fff', boxShadow: '0 20px 40px rgba(0,0,0,0.8)', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ textAlign: 'center', borderBottom: '1px dashed #374151', paddingBottom: '12px', marginBottom: '15px' }}>
-              <h3 style={{ margin: 0, color: '#f59e0b', fontSize: '18px' }}>DENNÁ UZÁVIERKA (Z-UZÁVIERKA)[cite: 3]</h3>
+              <h3 style={{ margin: 0, color: '#f59e0b', fontSize: '18px' }}>DENNÁ UZÁVIERKA (Z-UZÁVIERKA)</h3>
               <p style={{ fontSize: '12px', color: '#9ca3af', margin: '4px 0 0 0' }}>Dátum: {new Date().toLocaleDateString()}</p>
             </div>
 
@@ -832,10 +1157,18 @@ export default function App() {
                 <span style={{ fontWeight: '900', color: '#34d399' }}>{(totalRevenueToday + unresolvedTablesTotal).toFixed(2)} €</span>
               </div>
 
+              {/* Otázka 15: Grafický prehľad denných tržieb v uzávierke */}
+              <div style={{ background: '#030303', padding: '12px', borderRadius: '12px', border: '1px solid #1f2937', marginTop: '5px' }}>
+                <span style={{ fontSize: '12px', color: '#9ca3af', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>📈 Grafický vývoj tržieb:</span>
+                <div style={{ height: '150px' }}>
+                  <Line data={dailyRevenueChartData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9ca3af', font: { size: 10 } } }, y: { ticks: { color: '#9ca3af', font: { size: 10 } } } } }} />
+                </div>
+              </div>
+
               {automaticClosures.length > 0 && (
                 <div style={{ marginTop: '10px' }}>
                   <span style={{ fontSize: '12px', color: '#9ca3af', display: 'block', marginBottom: '6px' }}>História automatických polnočných uzávierok:</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '100px', overflowY: 'auto' }}>
                     {automaticClosures.map((ac, idx) => (
                       <div key={idx} style={{ background: '#030303', padding: '8px 10px', borderRadius: '6px', border: '1px solid #1f2937', fontSize: '11px', display: 'flex', justifyContent: 'space-between' }}>
                         <span>{ac.timestamp}</span>
@@ -860,16 +1193,16 @@ export default function App() {
                 };
                 sendReportToTelegram(manualReport);
                 setShowClosureModal(false);
-              }} style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
-                📧 Poslať na Telegram
+              }} style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
+                📧 Telegram
               </button>
               <button onClick={() => {
                 triggerInAppAlert("Z-uzávierka bola úspešne vytlačená.");
                 setShowClosureModal(false);
-              }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
-                Vytlačiť uzávierku
+              }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
+                Vytlačiť
               </button>
-              <button onClick={() => setShowClosureModal(false)} style={{ background: '#1f2937', color: '#fff', border: 'none', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              <button onClick={() => setShowClosureModal(false)} style={{ background: '#1f2937', color: '#fff', border: 'none', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
                 Zavrieť
               </button>
             </div>
@@ -877,6 +1210,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Otázka 10: Aktuálny čas a meno čašníka v hornej lište */}
       <header style={{ height: '60px', background: '#07090e', borderBottom: '1px solid #1f2937', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 20px', position: 'relative', zIndex: 100, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <button onClick={() => setMenuOpen(!menuOpen)} style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '5px', cursor: 'pointer' }}>
@@ -890,6 +1224,11 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px', fontSize: '13px' }}>
+          {/* Otázka 10: Zobrazenie aktuálneho času v hornej lište */}
+          <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '6px 10px', borderRadius: '8px', color: '#f59e0b', fontWeight: 'bold', fontSize: '12px' }}>
+            🕒 {currentTimeStr}
+          </div>
+
           <button className="fullscreen-btn" onClick={toggleFullscreen} style={{ background: '#111827', border: '1px solid #1f2937', color: '#f59e0b', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
             {isFullscreen ? '⏹ Exit Fullscreen' : '⛶ Fullscreen'}
           </button>
@@ -903,7 +1242,8 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <span style={{ color: '#9ca3af' }}>Obsluha: <strong style={{ color: '#fff' }}>{currentUser.name}</strong></span>
+            {/* Otázka 10: Zobrazenie mena čašníka v hornej lište */}
+            <span style={{ color: '#9ca3af' }}>Čašník: <strong style={{ color: '#fff' }}>{currentUser.name}</strong></span>
             
             <select 
               value={selectedTable} 
@@ -919,22 +1259,26 @@ export default function App() {
           </div>
         </div>
 
+        {/* Otázka 16: Správa skladu a produktov v hamburger menu */}
         {menuOpen && (
-          <div style={{ position: 'absolute', top: '65px', left: '15px', background: '#0f172a', border: '1px solid #1f2937', borderRadius: '14px', width: '250px', zIndex: 1000, padding: '10px', boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
-            <div onClick={() => { setCurrentTab('pos'); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'pos' ? '#f59e0b' : 'transparent', color: currentTab === 'pos' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>🧮 Pokladňa</div>
-            <div onClick={() => { payForTable(selectedTable); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: 'transparent', color: '#34d399', fontWeight: '600', marginBottom: '5px' }}>💳 Účet / Zaplatiť (Blok)</div>
-            <div onClick={() => { setShowClosureModal(true); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: 'transparent', color: '#f59e0b', fontWeight: '600', marginBottom: '5px' }}>📊 Denná uzávierka (Z)[cite: 3]</div>
-            <div onClick={() => { setCurrentTab('kds'); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'kds' ? '#f59e0b' : 'transparent', color: currentTab === 'kds' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>🖥️ KDS Displej & Oddelená tlač</div>
-            <div onClick={() => { setCurrentTab('floorplan'); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'floorplan' ? '#f59e0b' : 'transparent', color: currentTab === 'floorplan' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>🗺️ Mapa stôl & Rezervácie</div>
-            <div onClick={() => { setCurrentTab('loyalty'); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'loyalty' ? '#f59e0b' : 'transparent', color: currentTab === 'loyalty' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>⭐ Vernostný program & Vouchery</div>
-            <div onClick={() => { setCurrentTab('inventory'); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'inventory' ? '#f59e0b' : 'transparent', color: currentTab === 'inventory' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>🍷 Zásoby & Sklad</div>
+          <div style={{ position: 'absolute', top: '65px', left: '15px', background: '#0f172a', border: '1px solid #1f2937', borderRadius: '14px', width: '270px', zIndex: 1000, padding: '10px', boxShadow: '0 10px 30px rgba(0,0,0,0.8)' }}>
+            <div onClick={() => { setCurrentTab('pos'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'pos' ? '#f59e0b' : 'transparent', color: currentTab === 'pos' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>🧮 Pokladňa</div>
+            <div onClick={() => { payForTable(selectedTable); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: 'transparent', color: '#34d399', fontWeight: '600', marginBottom: '4px' }}>💳 Účet / Zaplatiť (Blok)</div>
+            <div onClick={() => { setShowHistoryModal(true); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: 'transparent', color: '#38bdf8', fontWeight: '600', marginBottom: '4px' }}>📜 História uzavretých účtov</div>
+            <div onClick={() => { setShowClosureModal(true); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: 'transparent', color: '#f59e0b', fontWeight: '600', marginBottom: '4px' }}>📊 Denná uzávierka (Z)</div>
+            <div onClick={() => { setCurrentTab('stats'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'stats' ? '#f59e0b' : 'transparent', color: currentTab === 'stats' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>📈 Manažérske štatistiky</div>
+            <div onClick={() => { setCurrentTab('kds'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'kds' ? '#f59e0b' : 'transparent', color: currentTab === 'kds' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>🖥️ KDS Displej & Oddelená tlač</div>
+            <div onClick={() => { setCurrentTab('floorplan'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'floorplan' ? '#f59e0b' : 'transparent', color: currentTab === 'floorplan' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>🗺️ Mapa stôl & Rezervácie</div>
+            <div onClick={() => { setCurrentTab('loyalty'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'loyalty' ? '#f59e0b' : 'transparent', color: currentTab === 'loyalty' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>⭐ Vernostný program & Vouchery</div>
+            {/* Otázka 16: Správa skladu a produktov priamo v hamburger menu */}
+            <div onClick={() => { setCurrentTab('inventory'); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'inventory' ? '#f59e0b' : 'transparent', color: currentTab === 'inventory' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>🍷 Správa skladu a produktov</div>
             <div onClick={() => { 
               setInventoryWizardState('select');
               setInventoryTargetProduct(null);
               setInventoryScannedCount(0);
               setCurrentTab('scanner'); 
               setMenuOpen(false); 
-            }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'scanner' ? '#f59e0b' : 'transparent', color: currentTab === 'scanner' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>📷 Inventúrny Skener</div>
+            }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'scanner' ? '#f59e0b' : 'transparent', color: currentTab === 'scanner' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>📷 Inventúrny Skener</div>
             {currentUser.isAdmin && (
               <div onClick={() => { 
                 setEditingProdId(null);
@@ -945,10 +1289,10 @@ export default function App() {
                 setNewProdBarcode('');
                 setCurrentTab('settings'); 
                 setMenuOpen(false); 
-              }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'settings' ? '#f59e0b' : 'transparent', color: currentTab === 'settings' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '5px' }}>⚙️ Nastavenia / Produkt</div>
+              }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', background: currentTab === 'settings' ? '#f59e0b' : 'transparent', color: currentTab === 'settings' ? '#030303' : '#fff', fontWeight: '600', marginBottom: '4px' }}>⚙️ Nastavenia / Produkt</div>
             )}
             <div style={{ borderTop: '1px solid #1f2937', margin: '5px 0' }}></div>
-            <div onClick={() => { setCurrentUser(null); setPinInput(''); setMenuOpen(false); }} style={{ padding: '12px 15px', borderRadius: '8px', cursor: 'pointer', color: '#ef4444', fontWeight: '600' }}>🔒 Odhlásiť</div>
+            <div onClick={() => { setCurrentUser(null); setPinInput(''); setMenuOpen(false); }} style={{ padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', color: '#ef4444', fontWeight: '600' }}>🔒 Odhlásiť</div>
           </div>
         )}
       </header>
@@ -961,6 +1305,22 @@ export default function App() {
             <div className="pos-container">
               
               <div className="pos-left-pane" style={{ display: 'flex', flexDirection: 'column', minHeight: '220px' }}>
+                {/* Otázka 7 & 17: Vyhľadávanie a Pokročilý výber kategórií */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center', flexShrink: '0' }}>
+                  <input 
+                    type="text" 
+                    placeholder="🔍 Rýchle vyhľadávanie produktu podľa názvu/kódu..." 
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    style={{ flex: 1, background: '#111827', border: '1px solid #1f2937', color: '#fff', padding: '8px 12px', borderRadius: '10px', fontSize: '13px' }}
+                  />
+                  {/* Otázka 13: Rýchle tlačidlo na vlastnú položku s vlastnou cenou */}
+                  <button onClick={() => { setCustomItemName(''); setCustomItemPrice(''); setShowCustomItemModal(true); }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '8px 14px', borderRadius: '10px', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    + Vlastná položka
+                  </button>
+                </div>
+
+                {/* Otázka 17: Pokročilý výber kategórií produktov (horizontálny scroller) */}
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '10px', overflowX: 'auto', paddingBottom: '4px', flexShrink: 0 }}>
                   {categories.map(cat => {
                     const conf = categoryConfig[cat] || categoryConfig['Všetko'];
@@ -992,56 +1352,73 @@ export default function App() {
                   })}
                 </div>
 
+                {/* Zoznam produktov (filtruje sa podľa kategórie aj vyhľadávania) */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px', paddingBottom: '10px' }}>
-                  {products.filter(p => activeCategory === 'Všetko' || p.category === activeCategory).map(product => {
-                    const conf = categoryConfig[product.category] || categoryConfig['Všetko'];
-                    const isUntracked = product.stock === 99;
-                    return (
-                      <div 
-                        key={product.id} 
-                        onClick={() => addToCart(product)} 
-                        style={{ 
-                          background: '#111827', 
-                          border: '1px solid #1f2937', 
-                          borderLeft: `3px solid ${conf.border}`, 
-                          borderRadius: '12px', 
-                          padding: '12px', 
-                          cursor: 'pointer', 
-                          display: 'flex', 
-                          flexDirection: 'column', 
-                          justifyContent: 'space-between', 
-                          minHeight: '90px' 
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontSize: '11px', color: conf.text, fontWeight: '700', textTransform: 'uppercase', marginBottom: '2px' }}>{product.category}</div>
-                          <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '6px', color: '#fff', lineHeight: '1.25' }}>{product.name}</div>
+                  {products
+                    .filter(p => activeCategory === 'Všetko' || p.category === activeCategory)
+                    .filter(p => {
+                      if (!searchQuery) return true;
+                      const q = searchQuery.toLowerCase();
+                      return p.name.toLowerCase().includes(q) || (p.barcode && p.barcode.toLowerCase().includes(q));
+                    })
+                    .map(product => {
+                      const conf = categoryConfig[product.category] || categoryConfig['Všetko'];
+                      const isUntracked = product.stock === 99;
+                      return (
+                        <div 
+                          key={product.id} 
+                          onClick={() => addToCart(product)} 
+                          style={{ 
+                            background: '#111827', 
+                            border: '1px solid #1f2937', 
+                            borderLeft: `3px solid ${conf.border}`, 
+                            borderRadius: '12px', 
+                            padding: '12px', 
+                            cursor: 'pointer', 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            justifyContent: 'space-between', 
+                            minHeight: '90px' 
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: '11px', color: conf.text, fontWeight: '700', textTransform: 'uppercase', marginBottom: '2px' }}>{product.category}</div>
+                            <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '6px', color: '#fff', lineHeight: '1.25' }}>{product.name}</div>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                            <div style={{ fontSize: '11px', color: '#9ca3af' }}>{isUntracked ? '∞' : `${product.stock} ks`}</div>
+                            <div style={{ color: '#f59e0b', fontWeight: '800', fontSize: '15px' }}>{product.price.toFixed(2)} €</div>
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                          <div style={{ fontSize: '11px', color: '#9ca3af' }}>{isUntracked ? '∞' : `${product.stock} ks`}</div>
-                          <div style={{ color: '#f59e0b', fontWeight: '800', fontSize: '15px' }}>{product.price.toFixed(2)} €</div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               </div>
 
               <div className="pos-right-pane" style={{ background: '#07090e', border: '1px solid #1f2937', borderRadius: '16px', padding: '12px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexShrink: 0 }}>
-                  <h3 style={{ margin: 0, fontSize: '14px', color: '#fff' }}>Účet: <span style={{ color: '#f59e0b' }}>{selectedTable}</span></h3>
+                  <h3 style={{ margin: 0, fontSize: '14px', color: '#fff' }}>Stôl: <span style={{ color: '#f59e0b' }}>{selectedTable}</span> {tablePaxData[selectedTable] ? `(${tablePaxData[selectedTable]} os.)` : ''}</h3>
                   <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#f59e0b' }}>{totalAmount} €</span>
                 </div>
 
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexShrink: 0 }}>
-                  {!currentUser.simplified && (
-                    <button style={{ flex: 1, padding: '8px 4px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px' }} onClick={handleSendToBar}>
-                      POSLAŤ (BAR/KUCHYŇA)
-                    </button>
-                  )}
-                  <button style={{ flex: 1, padding: '8px 4px', background: '#f59e0b', color: '#030303', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '11px' }} onClick={() => payForTable(selectedTable)}>
-                    ZAPLATIŤ ÚČET
+                {/* Otázka 6: Tlač predbežného účtu & Zľava na účet */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', marginBottom: '6px', flexShrink: 0 }}>
+                  <button style={{ padding: '8px 4px', background: '#38bdf8', color: '#030303', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px' }} onClick={() => setPreviewBillModal({ tableName: selectedTable, items: cart })}>
+                    🖨️ PREDBEŽNÝ ÚČET
                   </button>
+                  <button style={{ padding: '8px 4px', background: '#f59e0b', color: '#030303', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', fontSize: '11px' }} onClick={() => payForTable(selectedTable)}>
+                    💳 ZAPLATIŤ ÚČET
+                  </button>
+                </div>
+
+                {/* Globálna zľava na celý účet */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '11px', color: '#9ca3af', flexShrink: 0 }}>
+                  <span>Zľava na účet:</span>
+                  {[0, 5, 10, 15].map(p => (
+                    <button key={p} onClick={() => setGlobalDiscountPercent(p)} style={{ background: globalDiscountPercent === p ? '#f59e0b' : '#111827', color: globalDiscountPercent === p ? '#030303' : '#fff', border: '1px solid #1f2937', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '10px' }}>
+                      {p}%
+                    </button>
+                  ))}
                 </div>
                 
                 <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid #1f2937', borderBottom: '1px solid #1f2937', padding: '8px 0' }}>
@@ -1053,11 +1430,13 @@ export default function App() {
                         <div style={{ flexGrow: 1, cursor: 'pointer' }} onClick={() => setNoteModalItem(item)}>
                           <div style={{ fontSize: '12px', fontWeight: '600' }}>
                             {item.name} {item.sentToBar && <span style={{ fontSize: '9px', color: '#34d399', marginLeft: '4px' }}>(poslané)</span>}
+                            {item.discountPercent > 0 && <span style={{ fontSize: '9px', color: '#38bdf8', marginLeft: '4px' }}>(-{item.discountPercent}%)</span>}
                           </div>
                           {item.note && <div style={{ fontSize: '10px', color: '#38bdf8' }}>Pozn: {item.note}</div>}
                           <div style={{ fontSize: '10px', color: '#f59e0b' }}>{item.price.toFixed(2)} €</div>
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          <button onClick={() => setItemDiscountModal(item)} style={{ background: '#1f2937', border: 'none', color: '#38bdf8', cursor: 'pointer', fontSize: '10px', padding: '4px 6px', borderRadius: '4px' }} title="Zľava">🏷️</button>
                           <button onClick={() => setNoteModalItem(item)} style={{ background: '#1f2937', border: 'none', color: '#38bdf8', cursor: 'pointer', fontSize: '11px', padding: '4px 6px', borderRadius: '4px' }}>📝</button>
                           <button onClick={() => requestRemoveFromCart(item.cartId)} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' }}>✕</button>
                         </div>
@@ -1066,9 +1445,10 @@ export default function App() {
                   )}
                 </div>
 
+                {/* Otázka 19: Rýchle tlačidlo na zmazanie celého košíka */}
                 <div style={{ paddingTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, fontSize: '12px', color: '#9ca3af' }}>
                   <span>Položiek: {cart.length}</span>
-                  <button onClick={() => requestRemoveFromCart('all')} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px', textDecoration: 'underline' }}>Vyčistiť</button>
+                  <button onClick={() => requestRemoveFromCart('all')} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '11px', textDecoration: 'underline', fontWeight: 'bold' }}>🗑️ Zmazať celý košík</button>
                 </div>
               </div>
 
@@ -1076,7 +1456,46 @@ export default function App() {
           </div>
         )}
 
-        {/* VERNOSTNÝ PROGRAM & VOUCHERY */}
+        {/* Otázka 4: Manažérske štatistiky najpredávanejších produktov */}
+        {currentTab === 'stats' && (
+          <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>📈 Manažérske štatistiky najpredávanejších produktov</h2>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+              <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', color: '#f59e0b' }}>🏆 Top 5 najpredávanejších položiek</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {topProducts.length === 0 ? (
+                    <p style={{ color: '#9ca3af', fontSize: '13px' }}>Zatiaľ žiadne dáta z predaja.</p>
+                  ) : (
+                    topProducts.map((tp, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', background: '#030303', padding: '10px 14px', borderRadius: '10px', border: '1px solid #1f2937', fontSize: '13px' }}>
+                        <span><strong>#{idx + 1}</strong> {tp.name}</span>
+                        <span style={{ color: '#34d399', fontWeight: 'bold' }}>{tp.count} predajov</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', color: '#38bdf8' }}>📊 Prehľad obratu a výkonnosti</h3>
+                <div style={{ background: '#030303', padding: '14px', borderRadius: '12px', border: '1px solid #1f2937', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9ca3af' }}>Celkový počet uzavretých blokov:</span>
+                    <span style={{ fontWeight: 'bold', color: '#fff' }}>{totalTransactionsCount}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9ca3af' }}>Celková tržba dnes:</span>
+                    <span style={{ fontWeight: 'bold', color: '#34d399' }}>{totalRevenueToday.toFixed(2)} €</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VERNOSTný PROGRAM & VOUCHERY */}
         {currentTab === 'loyalty' && (
           <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>⭐ Vernostný program, Karty & Vouchery</h2>
@@ -1339,11 +1758,14 @@ export default function App() {
           </div>
         )}
 
-        {/* MAPA STÔL A REZERVÁCIE */}
+        {/* MAPA STÔL A REZERVÁCIE (Obsahuje aj Otázku 12: Presun/Zlúčenie a Otázku 18: Počet osôb) */}
         {currentTab === 'floorplan' && (
           <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>Mapa stôl & Rezervácie</h2>
+              <button onClick={() => setShowMoveTableModal(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>
+                🔀 Presunúť / Zlúčiť stôl ({selectedTable})
+              </button>
             </div>
 
             <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '16px', maxWidth: '600px' }}>
@@ -1379,17 +1801,29 @@ export default function App() {
                 const tTotal = tCart.reduce((sum, i) => sum + i.price, 0).toFixed(2);
                 const hasItems = tCart.length > 0;
                 const hasRes = reservations.find(r => r.table === t);
+                const paxCount = tablePaxData[t];
 
                 return (
-                  <div key={t} style={{ width: '150px', height: '110px', background: '#111827', border: selectedTable === t ? '2px solid #f59e0b' : '1px solid #1f2937', borderRadius: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '10px', boxSizing: 'border-box' }}>
-                    <div onClick={() => { setSelectedTable(t); setCurrentTab('pos'); }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div key={t} style={{ width: '160px', height: '120px', background: '#111827', border: selectedTable === t ? '2px solid #f59e0b' : '1px solid #1f2937', borderRadius: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '10px', boxSizing: 'border-box' }}>
+                    <div onClick={() => {
+                      // Otázka 18: Ak stôl nemá zadané osoby a je prázdny, opýta sa na počet osôb
+                      if (!hasItems && !paxCount) {
+                        setTableToConfigPax(t);
+                        setTempPaxInput('2');
+                        setShowPaxModal(true);
+                      } else {
+                        setSelectedTable(t);
+                        setCurrentTab('pos');
+                      }
+                    }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                       <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#fff' }}>{t}</span>
+                      {paxCount && <span style={{ fontSize: '10px', color: '#38bdf8' }}>{paxCount} osôb</span>}
                       {hasItems ? (
                         <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 'bold', marginTop: '2px' }}>{tTotal} €</span>
                       ) : hasRes ? (
                         <span style={{ fontSize: '10px', color: '#38bdf8', marginTop: '2px' }}>Rezervované ({hasRes.time})</span>
                       ) : (
-                        <span style={{ fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>Voľný</span>
+                        <span style={{ fontSize: '10px', color: '#4b5563', marginTop: '4px' }}>Voľný (Klik = Otvoriť)</span>
                       )}
                     </div>
                     {hasItems && (
@@ -1404,11 +1838,11 @@ export default function App() {
           </div>
         )}
 
-        {/* ZÁSOBY A SKLAD */}
+        {/* Otázka 16: Správa skladu a produktov */}
         {currentTab === 'inventory' && (
           <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>Zásoby & Skladový manažment</h2>
+              <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>🍷 Správa skladu a produktov</h2>
               {currentUser.isAdmin && (
                 <button onClick={() => {
                   setEditingProdId(null);
