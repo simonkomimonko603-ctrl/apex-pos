@@ -4,6 +4,7 @@ import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement } from 'chart.js';
 import { Pie, Bar, Line } from 'react-chartjs-2';
+import CustomerScanView from './components/CustomerScanView';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement);
 
@@ -29,14 +30,21 @@ const sanitizeTextForPrint = (text) => {
   }
 };
 
-const playNotificationSound = () => {
+const playNotificationSound = (type = 'success') => {
   try {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.15);
+    
+    if (type === 'error') {
+      osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(150, audioCtx.currentTime + 0.2);
+    } else {
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.15);
+    }
+
     gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
     osc.connect(gain);
@@ -49,6 +57,9 @@ const playNotificationSound = () => {
 };
 
 export default function App() {
+	if (window.location.pathname.startsWith('/scan')) {
+    return <CustomerScanView db={db} />;
+  }
   const [showSplash, setShowSplash] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [pinInput, setPinInput] = useState('');
@@ -101,6 +112,7 @@ export default function App() {
   const [paymentMethod, setPaymentMethod] = useState('Hotovosť'); 
   const [appliedVoucher, setAppliedVoucher] = useState('');
   const [voucherDiscount, setVoucherDiscount] = useState(0);
+  const [splitBillParts, setSplitBillParts] = useState(1);
 
   const [loyaltyCards, setLoyaltyCards] = useState([
     { id: 1, cardNumber: 'CARD-88421', owner: 'Jozef Mrkva', discountPercent: 10, points: 340 },
@@ -203,9 +215,9 @@ export default function App() {
     }
   };
 
-  const triggerInAppAlert = (message) => {
+  const triggerInAppAlert = (message, type = 'success') => {
     setInAppNotification(message);
-    playNotificationSound();
+    playNotificationSound(type);
     setTimeout(() => {
       setInAppNotification(null);
     }, 4000);
@@ -363,7 +375,7 @@ export default function App() {
         
         scanner.render(async () => {
           setInventoryScannedCount(prev => prev + 1);
-          playNotificationSound();
+          playNotificationSound('success');
         }, () => {});
       }, 100);
 
@@ -383,6 +395,7 @@ export default function App() {
       setCurrentUser({ name: 'Dorota D.', role: 'Obsluha', simplified: true, isAdmin: false });
     } else {
       setPinInput('');
+      triggerInAppAlert("Nesprávny PIN kód!", 'error');
     }
   };
 
@@ -415,10 +428,14 @@ export default function App() {
 
   const addCustomItemToCart = async () => {
     if (!customItemName || !customItemPrice) {
-      triggerInAppAlert("Zadajte názov aj cenu vlastnej položky!");
+      triggerInAppAlert("Zadajte názov aj cenu vlastnej položky!", 'error');
       return;
     }
     const priceVal = parseFloat(customItemPrice.toString().replace(',', '.')) || 0;
+    if (priceVal <= 0) {
+      triggerInAppAlert("Cena musí byť väčšia ako 0 €!", 'error');
+      return;
+    }
     const sanitizedCustomName = sanitizeTextForPrint(customItemName);
     const customProduct = {
       id: 'custom_' + Date.now(),
@@ -462,7 +479,7 @@ export default function App() {
         setPendingCancelItem(null);
       }
     } else {
-      triggerInAppAlert("Nesprávny manažérsky PIN!");
+      triggerInAppAlert("Nesprávny manažérsky PIN!", 'error');
       setManagerPinInput('');
     }
   };
@@ -488,6 +505,10 @@ export default function App() {
   const applyItemDiscount = async () => {
     if (!itemDiscountModal) return;
     const p = parseFloat(itemDiscountPercent) || 0;
+    if (p < 0 || p > 100) {
+      triggerInAppAlert("Zľava musí byť v rozmedzí 0 až 100 %!", 'error');
+      return;
+    }
     const currentTableCart = tableCarts[selectedTable] || [];
     const updatedCart = currentTableCart.map(item => {
       if (item.cartId === itemDiscountModal.cartId) {
@@ -507,7 +528,7 @@ export default function App() {
   const payForTable = async (tableName = selectedTable) => {
     const targetCart = tableCarts[tableName] || [];
     if (targetCart.length === 0) {
-      triggerInAppAlert("Účet pre " + tableName + " je prázdny.");
+      triggerInAppAlert("Účet pre " + tableName + " je prázdny.", 'error');
       return;
     }
 
@@ -527,6 +548,7 @@ export default function App() {
     setPaymentMethod('Hotovosť');
     setAppliedVoucher('');
     setVoucherDiscount(0);
+    setSplitBillParts(1);
   };
 
   const handleProcessPayment = async () => {
@@ -534,10 +556,12 @@ export default function App() {
     let finalTotalToPay = activeReceipt.total - voucherDiscount;
     if (finalTotalToPay < 0) finalTotalToPay = 0;
 
-    const paid = paymentMethod === 'Hotovosť' ? (parseFloat(activeReceipt.paidAmount.toString().replace(',', '.')) || 0) : finalTotalToPay;
+    const amountPerPart = finalTotalToPay / splitBillParts;
+
+    const paid = paymentMethod === 'Hotovosť' ? (parseFloat(activeReceipt.paidAmount.toString().replace(',', '.')) || 0) : amountPerPart;
     
-    if (paymentMethod === 'Hotovosť' && paid < finalTotalToPay) {
-      triggerInAppAlert("Zadaná suma je nižšia ako celkový účet!");
+    if (paymentMethod === 'Hotovosť' && paid < amountPerPart) {
+      triggerInAppAlert("Zadaná suma je nižšia ako čiastka k úhrade!", 'error');
       return;
     }
 
@@ -547,10 +571,11 @@ export default function App() {
       await addDoc(collection(db, 'paidReceipts'), {
         tableName,
         items: activeReceipt.items,
-        total: finalTotalToPay,
+        total: amountPerPart,
         originalTotal: activeReceipt.total,
         paymentMethod,
         voucherDiscount,
+        splitParts: splitBillParts,
         timestamp: activeReceipt.timestamp,
         createdAt: Date.now(),
         cashier: currentUser?.name || 'Neznámy',
@@ -620,6 +645,22 @@ export default function App() {
     } catch (e) {
       console.log("Error deleting order");
     }
+  };
+
+  const exportClosureToCSV = () => {
+    const totalRevenueToday = paidReceiptsHistory.reduce((sum, r) => sum + (r.total || 0), 0);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + "Datum,Cas,Storono/Platba,Suma,Kasir\n"
+      + paidReceiptsHistory.map(r => `${r.timestamp.split(',')[0]},${r.timestamp.split(',')[1] || ''},${r.paymentMethod},${r.total?.toFixed(2)},${r.cashier}`).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `denna_uzavierka_${new Date().toLocaleDateString()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    triggerInAppAlert("CSV report dennej uzávierky bol úspešne stiahnutý.");
   };
 
   let subtotalAmount = cart.reduce((sum, i) => sum + i.price, 0);
@@ -992,7 +1033,7 @@ export default function App() {
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000 }}>
           <div style={{ background: '#111827', border: '1px solid #ef4444', borderRadius: '20px', width: '340px', padding: '24px', textAlign: 'center', color: '#fff' }}>
             <h3 style={{ color: '#ef4444', margin: '0 0 10px 0' }}>Vyžadované schválenie</h3>
-            <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '15px' }}>Pre stornovanie položky zadajte PIN manažéra (1111):</p>
+            <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '15px' }}>Pre stornowanie položky zadajte PIN manažéra (1111):</p>
             <input 
               type="password" 
               autoFocus
@@ -1047,9 +1088,20 @@ export default function App() {
               ))}
             </div>
 
-            <div style={{ background: '#030303', padding: '8px 12px', borderRadius: '8px', marginBottom: '12px', fontSize: '11px', color: '#9ca3af', display: 'flex', justifyContent: 'space-between' }}>
-              <span>Základ DPH (20%): {(activeReceipt.total / 1.2).toFixed(2)} €</span>
-              <span>DPH: {(activeReceipt.total - (activeReceipt.total / 1.2)).toFixed(2)} €</span>
+            {/* DPH rozpis */}
+            <div style={{ background: '#030303', padding: '8px 12px', borderRadius: '8px', marginBottom: '12px', fontSize: '11px', color: '#9ca3af', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Základ DPH (20%):</span>
+                <span>{(activeReceipt.total / 1.2).toFixed(2)} €</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>DPH (20%):</span>
+                <span>{(activeReceipt.total - (activeReceipt.total / 1.2)).toFixed(2)} €</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#f59e0b' }}>
+                <span>Základ DPH (10% - Jedlo):</span>
+                <span>{(activeReceipt.total * 0.1).toFixed(2)} €</span>
+              </div>
             </div>
 
             <label style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '5px' }}>Spôsob platby:</label>
@@ -1059,6 +1111,23 @@ export default function App() {
                   {m}
                 </button>
               ))}
+            </div>
+
+            {/* Rozdelenie účtu (Split Bill) */}
+            <div style={{ background: '#030303', padding: '10px 12px', borderRadius: '10px', border: '1px solid #1f2937', marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', color: '#38bdf8', marginBottom: '5px', display: 'block', fontWeight: 'bold' }}>🔀 Rozdelenie účtu (Split Bill):</label>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                {[1, 2, 3, 4, 5].map(parts => (
+                  <button key={parts} onClick={() => setSplitBillParts(parts)} style={{ flex: 1, padding: '6px', background: splitBillParts === parts ? '#38bdf8' : '#111827', color: splitBillParts === parts ? '#030303' : '#fff', border: '1px solid #374151', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
+                    {parts}x
+                  </button>
+                ))}
+              </div>
+              {splitBillParts > 1 && (
+                <div style={{ fontSize: '12px', color: '#34d399', marginTop: '6px', textAlign: 'center', fontWeight: 'bold' }}>
+                  Suma na 1 osobu: {((Math.max(0, activeReceipt.total - voucherDiscount)) / splitBillParts).toFixed(2)} € (z {splitBillParts} častí)
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: '12px' }}>
@@ -1077,7 +1146,7 @@ export default function App() {
                     setVoucherDiscount(foundVoucher.value);
                     triggerInAppAlert("Uplatnený voucher " + foundVoucher.code + " v hodnote " + foundVoucher.value.toFixed(2) + " €");
                   } else {
-                    triggerInAppAlert("Neplatný alebo neaktívny kód poukážky!");
+                    triggerInAppAlert("Neplatný alebo neaktívny kód poukážky!", 'error');
                   }
                 }} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>
                   Použiť
@@ -1100,12 +1169,21 @@ export default function App() {
                   placeholder="0.00" 
                   value={activeReceipt.paidAmount} 
                   onChange={e => setActiveReceipt({ ...activeReceipt, paidAmount: e.target.value })} 
-                  style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '16px', width: '100%', marginBottom: '10px', boxSizing: 'border-box' }} 
+                  style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '16px', width: '100%', marginBottom: '8px', boxSizing: 'border-box' }} 
                 />
 
-                {activeReceipt.paidAmount !== '' && parseFloat(activeReceipt.paidAmount) >= Math.max(0, activeReceipt.total - voucherDiscount) && (
+                {/* Rýchle tlačidlá hotovosti */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                  {[5, 10, 20, 50].map(cashVal => (
+                    <button key={cashVal} onClick={() => setActiveReceipt({ ...activeReceipt, paidAmount: cashVal.toString() })} style={{ flex: 1, background: '#1f2937', color: '#f59e0b', border: '1px solid #374151', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
+                      {cashVal} €
+                    </button>
+                  ))}
+                </div>
+
+                {activeReceipt.paidAmount !== '' && parseFloat(activeReceipt.paidAmount) >= ((Math.max(0, activeReceipt.total - voucherDiscount)) / splitBillParts) && (
                   <div style={{ fontSize: '14px', color: '#34d399', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center' }}>
-                    Vydávať: {(parseFloat(activeReceipt.paidAmount) - Math.max(0, activeReceipt.total - voucherDiscount)).toFixed(2)} €
+                    Vydávať: {(parseFloat(activeReceipt.paidAmount) - ((Math.max(0, activeReceipt.total - voucherDiscount)) / splitBillParts)).toFixed(2)} €
                   </div>
                 )}
               </>
@@ -1183,11 +1261,8 @@ export default function App() {
               }} style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
                 📧 Telegram
               </button>
-              <button onClick={() => {
-                triggerInAppAlert("Z-uzávierka bola úspešne vytlačená.");
-                setShowClosureModal(false);
-              }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
-                Vytlačiť
+              <button onClick={exportClosureToCSV} style={{ flex: 1, background: '#10b981', color: '#030303', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
+                📥 CSV Report
               </button>
               <button onClick={() => setShowClosureModal(false)} style={{ background: '#1f2937', color: '#fff', border: 'none', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
                 Zavrieť
@@ -1499,7 +1574,7 @@ export default function App() {
                     
                     <button onClick={() => {
                       if (!newCardOwner) {
-                        triggerInAppAlert("Zadajte meno majiteľa karty!");
+                        triggerInAppAlert("Zadajte meno majiteľa karty!", 'error');
                         return;
                       }
                       const randomCardNo = "CARD-" + Math.floor(10000 + Math.random() * 90000);
@@ -1561,7 +1636,7 @@ export default function App() {
                     />
                     <button onClick={() => {
                       if (!newVoucherCode || !newVoucherValue) {
-                        triggerInAppAlert("Vyplňte kód aj hodnotu voucheru!");
+                        triggerInAppAlert("Vyplňte kód aj hodnotu voucheru!", 'error');
                         return;
                       }
                       setVouchersList([...vouchersList, {
@@ -1730,145 +1805,79 @@ export default function App() {
 
         {currentTab === 'floorplan' && (
           <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>Mapa stôl & Rezervácie</h2>
-              <button onClick={() => setShowMoveTableModal(true)} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>
-                🔀 Presunúť / Zlúčiť stôl ({selectedTable})
-              </button>
-            </div>
-
-            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '16px', maxWidth: '600px' }}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#f59e0b', fontSize: '14px' }}>Vytvoriť novú rezerváciu stola</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px', marginBottom: '10px' }}>
-                <select value={newResTable} onChange={e => setNewResTable(e.target.value)} style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }}>
-                  {tables.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input type="text" placeholder="Čas (npr. 19:00)" value={newResTime} onChange={e => setNewResTime(e.target.value)} style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }} />
-                <input type="text" placeholder="Meno hosťa" value={newResName} onChange={e => setNewResName(e.target.value)} style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }} />
-                <input type="number" placeholder="Počet osôb" value={newResPax} onChange={e => setNewResPax(e.target.value)} style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }} />
-              </div>
-              <button onClick={() => {
-                if (!newResName) {
-                  triggerInAppAlert("Zadajte meno pre rezerváciu!");
-                  return;
-                }
-                setReservations([...reservations, {
-                  id: Date.now(),
-                  table: newResTable,
-                  time: newResTime,
-                  name: sanitizeTextForPrint(newResName),
-                  pax: parseInt(newResPax) || 2
-                }]);
-                setNewResName('');
-                triggerInAppAlert("Rezervácia úspešne pridaná.");
-              }} style={{ width: '100%', background: '#f59e0b', color: '#030303', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
-                Pridať rezerváciu
-              </button>
-            </div>
-
-            <h3 style={{ margin: '10px 0 0 0', fontSize: '15px', color: '#fff' }}>Prehľad stolov & Aktívne rezervácie</h3>
+            <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>🗺️ Grafická mapa stolov & Rezervácie</h2>
             
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '15px' }}>
               {tables.map(tName => {
-                const tCart = tableCarts[tName] || [];
-                const tSum = tCart.reduce((s, i) => s + i.price, 0);
-                const isOccupied = tCart.length > 0;
-                const pax = tablePaxData[tName];
-                const resForTable = reservations.filter(r => r.table === tName);
-
+                const cartItems = tableCarts[tName] || [];
+                const isOccupied = cartItems.length > 0;
+                const tableSum = cartItems.reduce((s, i) => s + i.price, 0);
+                const pax = tablePaxData[tName] || 2;
+                
                 return (
                   <div 
                     key={tName} 
+                    onClick={() => {
+                      if (!isOccupied) {
+                        setTableToConfigPax(tName);
+                        setTempPaxInput('2');
+                        setShowPaxModal(true);
+                      } else {
+                        setSelectedTable(tName);
+                        setCurrentTab('pos');
+                      }
+                    }}
                     style={{ 
-                      background: '#111827', 
+                      background: isOccupied ? 'rgba(245, 158, 11, 0.1)' : '#111827', 
                       border: isOccupied ? '2px solid #f59e0b' : '1px solid #1f2937', 
                       borderRadius: '16px', 
-                      padding: '16px', 
+                      padding: '20px', 
                       display: 'flex', 
                       flexDirection: 'column', 
-                      gap: '10px' 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      cursor: 'pointer', 
+                      minHeight: '120px',
+                      transition: 'all 0.2s ease'
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#fff' }}>{tName}</span>
-                      <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', background: isOccupied ? 'rgba(245, 158, 11, 0.2)' : 'rgba(52, 211, 153, 0.2)', color: isOccupied ? '#f59e0b' : '#34d399', fontWeight: 'bold' }}>
-                        {isOccupied ? 'Obsadený' : 'Voľný'}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                      {pax ? `Počet osôb: ${pax}` : 'Počet osôb nenastavený'}
-                    </div>
-
-                    {isOccupied && (
-                      <div style={{ fontSize: '13px', color: '#34d399', fontWeight: 'bold' }}>
-                        Účet: {tSum.toFixed(2)} € ({tCart.length} ks)
-                      </div>
-                    )}
-
-                    {resForTable.length > 0 && (
-                      <div style={{ background: '#030303', padding: '6px 8px', borderRadius: '6px', border: '1px solid #1f2937', fontSize: '11px', color: '#38bdf8' }}>
-                        📅 Rezervácia: {resForTable[0].time} - {resForTable[0].name} ({resForTable[0].pax} os.)
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '6px', marginTop: 'auto' }}>
-                      <button 
-                        onClick={() => {
-                          if (!isOccupied) {
-                            setTableToConfigPax(tName);
-                            setTempPaxInput('2');
-                            setShowPaxModal(true);
-                          } else {
-                            setSelectedTable(tName);
-                            setCurrentTab('pos');
-                          }
-                        }} 
-                        style={{ flex: 1, background: '#f59e0b', color: '#030303', border: 'none', padding: '8px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
-                      >
-                        {isOccupied ? 'Otvoriť účet' : 'Otvoriť stôl'}
-                      </button>
-                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: isOccupied ? '#f59e0b' : '#fff', marginBottom: '8px' }}>{tName}</div>
+                    <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>{isOccupied ? `Obsadené (${pax} os.)` : 'Voľný stôl'}</div>
+                    {isOccupied && <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#34d399' }}>{tableSum.toFixed(2)} €</div>}
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
 
-        {currentTab === 'inventory' && (
-          <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>🍷 Správa skladu a produktov</h2>
-              <button onClick={() => {
-                setInventoryWizardState('select');
-                setInventoryTargetProduct(null);
-                setInventoryScannedCount(0);
-                setCurrentTab('scanner');
-              }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}>
-                📷 Spustiť inventúrny skener
-              </button>
-            </div>
-
-            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#f59e0b' }}>Grafický prehľad zásob podľa kategórií</h3>
-              <div style={{ height: '220px' }}>
-                <Bar data={categoryStockData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9ca3af', font: { size: 10 } } }, y: { ticks: { color: '#9ca3af', font: { size: 10 } } } } }} />
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px', marginTop: '10px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#f59e0b' }}>📅 Správa rezervácií</h3>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '15px' }}>
+                <select value={newResTable} onChange={e => setNewResTable(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '8px', borderRadius: '8px', fontSize: '13px' }}>
+                  {tables.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input type="text" placeholder="Čas (npr. 19:00)" value={newResTime} onChange={e => setNewResTime(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '8px 12px', borderRadius: '8px', fontSize: '13px' }} />
+                <input type="text" placeholder="Meno hosťa" value={newResName} onChange={e => setNewResName(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '8px 12px', borderRadius: '8px', fontSize: '13px' }} />
+                <button onClick={() => {
+                  if (!newResName) {
+                    triggerInAppAlert("Zadajte meno hosťa pre rezerváciu!", 'error');
+                    return;
+                  }
+                  setReservations([...reservations, { id: Date.now(), table: newResTable, time: newResTime, name: sanitizeTextForPrint(newResName), pax: parseInt(newResPax) }]);
+                  setNewResName('');
+                  triggerInAppAlert("Rezervácia úspešne pridaná.");
+                }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
+                  Pridať rezerváciu
+                </button>
               </div>
-            </div>
 
-            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#fff' }}>Zoznam skladových položiek</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '350px', overflowY: 'auto' }}>
-                {products.map(prod => (
-                  <div key={prod.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#030303', padding: '10px 14px', borderRadius: '10px', border: '1px solid #1f2937', fontSize: '13px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {reservations.map(res => (
+                  <div key={res.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#030303', padding: '10px 14px', borderRadius: '10px', border: '1px solid #1f2937', fontSize: '13px' }}>
                     <div>
-                      <div style={{ fontWeight: 'bold', color: '#fff' }}>{prod.name} <span style={{ color: '#f59e0b', fontSize: '11px' }}>({prod.category})</span></div>
-                      <div style={{ color: '#9ca3af', fontSize: '11px' }}>EAN: {prod.barcode || 'Nedostupný'} | Cena: {prod.price.toFixed(2)} €</div>
+                      <strong style={{ color: '#f59e0b' }}>{res.table}</strong> o <strong>{res.time}</strong> — Hostia: <strong>{res.name}</strong>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                      <span style={{ fontWeight: 'bold', color: prod.stock === 99 ? '#9ca3af' : '#34d399' }}>{prod.stock === 99 ? '∞ (Neobmedzené)' : `${prod.stock} ks`}</span>
-                    </div>
+                    <button onClick={() => setReservations(reservations.filter(r => r.id !== res.id))} style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '13px' }}>✕</button>
                   </div>
                 ))}
               </div>
@@ -1876,93 +1885,110 @@ export default function App() {
           </div>
         )}
 
-        {currentTab === 'settings' && currentUser.isAdmin && (
+        {currentTab === 'inventory' && (
           <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>⚙️ Nastavenia a Správa produktov (Admin)</h2>
+            <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>🍷 Správa skladu, stavu zásob a tovaru</h2>
             
-            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px', maxWidth: '500px' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#f59e0b' }}>{editingProdId ? 'Upraviť produkt' : 'Pridať nový produkt do ponuky'}</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-                <input 
-                  type="text" 
-                  placeholder="Názov produktu" 
-                  value={newProdName} 
-                  onChange={e => setNewProdName(e.target.value)} 
-                  style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} 
-                />
-                <select 
-                  value={newProdCat} 
-                  onChange={e => setNewProdCat(e.target.value)} 
-                  style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
-                >
-                  {categories.filter(c => c !== 'Všetko').map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <input 
-                    type="number" 
-                    placeholder="Cena (€)" 
-                    value={newProdPrice} 
-                    onChange={e => setNewProdPrice(e.target.value)} 
-                    style={{ flex: 1, background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} 
-                  />
-                  <input 
-                    type="number" 
-                    placeholder="Počet ks na sklade (99 = ∞)" 
-                    value={newProdStock} 
-                    onChange={e => setNewProdStock(e.target.value)} 
-                    style={{ flex: 1, background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} 
-                  />
-                </div>
-                <input 
-                  type="text" 
-                  placeholder="Čiarový kód (EAN)" 
-                  value={newProdBarcode} 
-                  onChange={e => setNewProdBarcode(e.target.value)} 
-                  style={{ background: '#030303', border: '1px solid #374151', color: '#fff', padding: '10px', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} 
-                />
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#f59e0b' }}>Aktuálny stav skladu produktov</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px' }}>
+                {products.map(prod => (
+                  <div key={prod.id} style={{ background: '#030303', border: '1px solid #1f2937', padding: '12px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', fontSize: '13px', color: '#fff' }}>{prod.name}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>Kat: {prod.category} | Cena: {prod.price.toFixed(2)} €</div>
+                    </div>
+                    <div style={{ fontWeight: '800', color: prod.stock <= 5 && prod.stock !== 99 ? '#ef4444' : '#34d399', fontSize: '14px' }}>
+                      {prod.stock === 99 ? '∞' : `${prod.stock} ks`}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <button onClick={async () => {
-                if (!newProdName || !newProdPrice) {
-                  triggerInAppAlert("Zadajte názov a cenu produktu!");
-                  return;
-                }
-                const prodData = {
-                  name: sanitizeTextForPrint(newProdName),
-                  category: newProdCat,
-                  price: parseFloat(newProdPrice) || 0,
-                  stock: newProdStock === '' ? 99 : parseInt(newProdStock),
-                  barcode: newProdBarcode || '',
-                  vat: 20
-                };
-
-                if (editingProdId) {
-                  await updateDoc(doc(db, 'products', editingProdId), prodData);
-                  triggerInAppAlert("Produkt úspešne upravený.");
-                } else {
-                  await addDoc(collection(db, 'products'), prodData);
-                  triggerInAppAlert("Nový produkt úspešne pridaný.");
-                }
-
-                setEditingProdId(null);
-                setNewProdName('');
-                setNewProdPrice('');
-                setNewProdStock('');
-                setNewProdBarcode('');
-              }} style={{ width: '100%', background: '#f59e0b', color: '#030303', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
-                {editingProdId ? 'Uložiť zmeny' : 'Pridať produkt'}
-              </button>
             </div>
 
-            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#fff' }}>Existujúce produkty v systéme</h3>
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#38bdf8' }}>📊 Skladové zásoby podľa kategórií</h3>
+              <div style={{ height: '220px', maxWidth: '500px', margin: '0 auto' }}>
+                <Pie data={categoryStockData} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#9ca3af', font: { size: 11 } } } } }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentTab === 'settings' && currentUser?.isAdmin && (
+          <div style={{ flexGrow: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '17px', color: '#fff' }}>⚙️ Administrácia a správa sortimentu</h2>
+            
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px', maxWidth: '600px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#f59e0b' }}>{editingProdId ? 'Upravit produkt' : 'Pridať nový produkt'}</h3>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                <input type="text" placeholder="Názov produktu" value={newProdName} onChange={e => setNewProdName(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '10px', borderRadius: '8px', fontSize: '13px' }} />
+                <select value={newProdCat} onChange={e => setNewProdCat(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                  {categories.filter(c => c !== 'Všetko').map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '15px' }}>
+                <input type="number" placeholder="Cena (€)" value={newProdPrice} onChange={e => setNewProdPrice(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '10px', borderRadius: '8px', fontSize: '13px' }} />
+                <input type="number" placeholder="Počet na sklade" value={newProdStock} onChange={e => setNewProdStock(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '10px', borderRadius: '8px', fontSize: '13px' }} />
+                <input type="text" placeholder="EAN čiarový kód" value={newProdBarcode} onChange={e => setNewProdBarcode(e.target.value)} style={{ background: '#030303', color: '#fff', border: '1px solid #374151', padding: '10px', borderRadius: '8px', fontSize: '13px' }} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={async () => {
+                  if (!newProdName || !newProdPrice) {
+                    triggerInAppAlert("Zadajte aspoň názov a cenu produktu!", 'error');
+                    return;
+                  }
+                  const payload = {
+                    name: sanitizeTextForPrint(newProdName),
+                    category: newProdCat,
+                    price: parseFloat(newProdPrice) || 0,
+                    stock: newProdStock === '' ? 99 : parseInt(newProdStock),
+                    barcode: newProdBarcode || '',
+                    vat: 20
+                  };
+
+                  if (editingProdId) {
+                    await updateDoc(doc(db, 'products', editingProdId), payload);
+                    triggerInAppAlert("Produkt úspešne aktualizovaný.");
+                  } else {
+                    await addDoc(collection(db, 'products'), payload);
+                    triggerInAppAlert("Nový produkt úspešne pridaný.");
+                  }
+
+                  setEditingProdId(null);
+                  setNewProdName('');
+                  setNewProdPrice('');
+                  setNewProdStock('');
+                  setNewProdBarcode('');
+                }} style={{ background: '#f59e0b', color: '#030303', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}>
+                  {editingProdId ? 'Uložiť zmeny' : 'Vytvoriť produkt'}
+                </button>
+                {editingProdId && (
+                  <button onClick={() => {
+                    setEditingProdId(null);
+                    setNewProdName('');
+                    setNewProdPrice('');
+                    setNewProdStock('');
+                    setNewProdBarcode('');
+                  }} style={{ background: '#374151', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>
+                    Zrušiť
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '15px', color: '#fff' }}>Zoznam existujúcich produktov</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
                 {products.map(prod => (
                   <div key={prod.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#030303', padding: '10px 14px', borderRadius: '10px', border: '1px solid #1f2937', fontSize: '13px' }}>
                     <div>
-                      <div style={{ fontWeight: 'bold', color: '#fff' }}>{prod.name} <span style={{ color: '#f59e0b', fontSize: '11px' }}>({prod.category})</span> - <span style={{ color: '#34d399' }}>{prod.price.toFixed(2)} €</span></div>
-                      <div style={{ color: '#9ca3af', fontSize: '11px' }}>Sklad: {prod.stock === 99 ? '∞' : `${prod.stock} ks`} | EAN: {prod.barcode || '-'}</div>
+                      <strong style={{ color: '#fff' }}>{prod.name}</strong> <span style={{ color: '#f59e0b' }}>({prod.category})</span> — <span style={{ color: '#34d399' }}>{prod.price.toFixed(2)} €</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '10px' }}>
                       <button onClick={() => {
                         setEditingProdId(prod.id);
                         setNewProdName(prod.name);
